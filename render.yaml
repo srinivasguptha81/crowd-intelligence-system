@@ -5,7 +5,7 @@ services:
     rootDir: backend
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
-    plan: standard
+    plan: free
     envVars:
       - key: APP_NAME
         value: CrowdGuard AI
