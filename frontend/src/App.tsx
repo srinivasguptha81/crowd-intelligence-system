@@ -23,14 +23,37 @@ import {
   Zap,
 } from 'lucide-react'
 
-const API =
-  (import.meta as any).env?.VITE_API_BASE_URL ||
-  'http://127.0.0.1:8000'
+const ENV_API_BASE = ((import.meta as any).env?.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '')
 
-const wsBaseUrl = () => {
-  if (API.startsWith('https://')) return API.replace('https://', 'wss://')
-  if (API.startsWith('http://')) return API.replace('http://', 'ws://')
-  return API
+const resolveInitialApiUrl = () => {
+  try {
+    const saved = localStorage.getItem('crowdguard_api_url')
+    if (saved) return saved.trim().replace(/\/+$/, '')
+  } catch {
+    // ignore storage errors
+  }
+  if (ENV_API_BASE) return ENV_API_BASE
+  if (
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ) {
+    return 'http://127.0.0.1:8000'
+  }
+  return ''
+}
+
+const resolveInitialToken = () => {
+  try {
+    return sessionStorage.getItem('crowdguard_api_token') || ''
+  } catch {
+    return ''
+  }
+}
+
+const wsBaseUrl = (base: string) => {
+  if (base.startsWith('https://')) return base.replace('https://', 'wss://')
+  if (base.startsWith('http://')) return base.replace('http://', 'ws://')
+  return base
 }
 
 type Zone = {
@@ -211,6 +234,12 @@ const timeLabel = (s: number) =>
 
 export default function App() {
   const [navSection, setNavSection] = useState<'overview' | 'cameras' | 'incidents'>('overview')
+  const [apiUrl, setApiUrl] = useState<string>(() => resolveInitialApiUrl())
+  const [apiToken, setApiToken] = useState<string>(() => resolveInitialToken())
+  const [showServerConfig, setShowServerConfig] = useState<boolean>(false)
+  const [draftApiUrl, setDraftApiUrl] = useState<string>(() => resolveInitialApiUrl())
+  const [draftToken, setDraftToken] = useState<string>(() => resolveInitialToken())
+
   const [health, setHealth] = useState<any>(null)
   const [file, setFile] = useState<File | null>(null)
   const [areaM2, setAreaM2] = useState<number>(36)
@@ -238,21 +267,60 @@ export default function App() {
 
   const wsRef = useRef<WebSocket | null>(null)
 
-  async function refreshCore() {
+  async function apiFetch(path: string, init: RequestInit = {}) {
+    if (!apiUrl) {
+      throw new Error('Backend server URL is not configured.')
+    }
+    const headers = new Headers(init.headers || {})
+    if (apiToken) {
+      headers.set('X-API-Key', apiToken)
+    }
+    return fetch(`${apiUrl}${path}`, { ...init, headers })
+  }
+
+  function saveServerConfig(e?: React.FormEvent) {
+    if (e) e.preventDefault()
+    const cleanUrl = draftApiUrl.trim().replace(/\/+$/, '')
+    const cleanTok = draftToken.trim()
+    setApiUrl(cleanUrl)
+    setApiToken(cleanTok)
     try {
-      const h = await fetch(`${API}/health`)
+      if (cleanUrl) {
+        localStorage.setItem('crowdguard_api_url', cleanUrl)
+      } else {
+        localStorage.removeItem('crowdguard_api_url')
+      }
+      if (cleanTok) {
+        sessionStorage.setItem('crowdguard_api_token', cleanTok)
+      } else {
+        sessionStorage.removeItem('crowdguard_api_token')
+      }
+    } catch {
+      // ignore storage errors
+    }
+    setShowServerConfig(false)
+    setError('')
+  }
+
+  async function refreshCore() {
+    if (!apiUrl) {
+      setHealth(null)
+      return
+    }
+    try {
+      const h = await apiFetch('/health')
       if (h.ok) {
         setHealth(await h.json())
       } else {
         setHealth(null)
       }
 
-      const inc = await fetch(`${API}/api/v1/incidents`)
+      const inc = await apiFetch('/api/v1/incidents')
       if (inc.ok) {
         setIncidents((await inc.json()).items || [])
       }
 
-      const cams = await fetch(`${API}/api/v1/cameras`)
+      const cams = await apiFetch('/api/v1/cameras')
       if (cams.ok) {
         const list: CameraRecord[] = (await cams.json()).items || []
         setCameras(list)
@@ -261,7 +329,7 @@ export default function App() {
         }
       }
 
-      const hist = await fetch(`${API}/api/v1/analyses?limit=10`)
+      const hist = await apiFetch('/api/v1/analyses?limit=10')
       if (hist.ok) {
         setRecentAnalyses((await hist.json()).items || [])
       }
@@ -276,7 +344,7 @@ export default function App() {
       void refreshCore()
     }, 4000)
     return () => clearInterval(id)
-  }, [])
+  }, [apiUrl, apiToken])
 
   const selectedCamera = useMemo(
     () => cameras.find((c) => c.camera_id === selectedCamId) || null,
@@ -291,14 +359,15 @@ export default function App() {
     }
     setWsConnected(false)
 
-    if (!selectedCamera || selectedCamera.status === 'stopped') {
+    if (!apiUrl || !selectedCamera || selectedCamera.status === 'stopped') {
       setLiveImage('')
       setLiveMetrics(null)
       return
     }
 
     let closedByEffect = false
-    const wsUrl = `${wsBaseUrl()}/ws/cameras/${encodeURIComponent(selectedCamera.camera_id)}`
+    const tokenQuery = apiToken ? `?token=${encodeURIComponent(apiToken)}` : ''
+    const wsUrl = `${wsBaseUrl(apiUrl)}/ws/cameras/${encodeURIComponent(selectedCamera.camera_id)}${tokenQuery}`
     const ws = new WebSocket(wsUrl)
     wsRef.current = ws
 
@@ -332,7 +401,7 @@ export default function App() {
       closedByEffect = true
       ws.close()
     }
-  }, [selectedCamera?.camera_id, selectedCamera?.status])
+  }, [apiUrl, apiToken, selectedCamera?.camera_id, selectedCamera?.status])
 
   async function analyzeAsync() {
     if (!file) {
@@ -350,7 +419,7 @@ export default function App() {
       fd.append('monitored_area_m2', String(areaM2))
       fd.append('row_weights', rowWeights)
 
-      const startRes = await fetch(`${API}/api/v1/analyze/async`, {
+      const startRes = await apiFetch('/api/v1/analyze/async', {
         method: 'POST',
         body: fd,
       })
@@ -362,7 +431,7 @@ export default function App() {
       const aid = job.analysis_id
       while (true) {
         await new Promise((r) => setTimeout(r, 750))
-        const pollRes = await fetch(`${API}/api/v1/analysis/${aid}`)
+        const pollRes = await apiFetch(`/api/v1/analysis/${aid}`)
         const state = await pollRes.json()
         if (!pollRes.ok) {
           throw new Error(state.detail || 'Failed checking analysis status.')
@@ -391,7 +460,7 @@ export default function App() {
     if (!aid) return
     setError('')
     try {
-      const r = await fetch(`${API}/api/v1/analysis/${aid}`)
+      const r = await apiFetch(`/api/v1/analysis/${aid}`)
       const d = await r.json()
       if (r.ok && d.result) {
         setAnalysis(d.result)
@@ -412,7 +481,7 @@ export default function App() {
     setError('')
     try {
       const cid = `cam-${camName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 14) || 'venue'}`
-      const r = await fetch(`${API}/api/v1/cameras/start`, {
+      const r = await apiFetch('/api/v1/cameras/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -441,7 +510,7 @@ export default function App() {
 
   async function stopCamera(cid: string) {
     try {
-      await fetch(`${API}/api/v1/cameras/${encodeURIComponent(cid)}/stop`, { method: 'POST' })
+      await apiFetch(`/api/v1/cameras/${encodeURIComponent(cid)}/stop`, { method: 'POST' })
       await refreshCore()
     } catch {
       setError('Unable to stop camera stream.')
@@ -450,7 +519,7 @@ export default function App() {
 
   async function removeCamera(cid: string) {
     try {
-      await fetch(`${API}/api/v1/cameras/${encodeURIComponent(cid)}`, { method: 'DELETE' })
+      await apiFetch(`/api/v1/cameras/${encodeURIComponent(cid)}`, { method: 'DELETE' })
       await refreshCore()
     } catch {
       setError('Unable to remove camera.')
@@ -459,7 +528,7 @@ export default function App() {
 
   async function updateCamArea(cid: string, area: number) {
     try {
-      await fetch(`${API}/api/v1/cameras/${encodeURIComponent(cid)}/calibration`, {
+      await apiFetch(`/api/v1/cameras/${encodeURIComponent(cid)}/calibration`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -475,7 +544,7 @@ export default function App() {
 
   async function updateIncidentStatus(id: string, status: string) {
     try {
-      await fetch(`${API}/api/v1/incidents/${encodeURIComponent(id)}`, {
+      await apiFetch(`/api/v1/incidents/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
@@ -488,7 +557,7 @@ export default function App() {
 
   async function clearAllIncidents() {
     try {
-      await fetch(`${API}/api/v1/incidents`, { method: 'DELETE' })
+      await apiFetch('/api/v1/incidents', { method: 'DELETE' })
       await refreshCore()
     } catch {
       setError('Could not clear incidents.')
@@ -584,16 +653,73 @@ export default function App() {
             <span className="dot" />
             {health
               ? `API v${health.version || '1.0'} · ${health.risk_model_loaded ? 'ML Model' : 'Physics Engine'}`
-              : 'API disconnected'}
+              : apiUrl
+                ? 'API disconnected'
+                : 'Backend not configured'}
             <button
               className="ghost"
               onClick={() => void refreshCore()}
               aria-label="Refresh API status"
+              title="Refresh API status"
             >
               <RefreshCw size={15} />
             </button>
+            <button
+              className="ghost"
+              onClick={() => {
+                setDraftApiUrl(apiUrl)
+                setDraftToken(apiToken)
+                setShowServerConfig((prev) => !prev)
+              }}
+              aria-label="Configure backend URL"
+              title="Configure backend server URL"
+            >
+              <Sliders size={15} />
+            </button>
           </div>
         </header>
+
+        {(showServerConfig || !apiUrl) && (
+          <form className="panel server-config" onSubmit={saveServerConfig}>
+            <div className="panel-title">
+              <div>
+                <div className="eyebrow">CLOUD / VERCEL BACKEND CONNECTION</div>
+                <h2>Connect FastAPI Vision &amp; ML Engine</h2>
+              </div>
+              {showServerConfig && apiUrl && (
+                <button
+                  type="button"
+                  className="chip-btn"
+                  onClick={() => setShowServerConfig(false)}
+                >
+                  Close
+                </button>
+              )}
+            </div>
+            <p className="muted" style={{ marginTop: 0 }}>
+              Vercel hosts the React dashboard. Point this UI to your hosted Python backend URL
+              (Render, Railway, Fly.io, Cloud VM, or HTTPS tunnel) or set{' '}
+              <code>VITE_API_BASE_URL</code> in Vercel Project Environment Variables.
+            </p>
+            <div className="server-fields">
+              <input
+                type="url"
+                value={draftApiUrl}
+                onChange={(e) => setDraftApiUrl(e.target.value)}
+                placeholder="https://crowdguard-ai-backend.onrender.com"
+              />
+              <input
+                type="password"
+                value={draftToken}
+                onChange={(e) => setDraftToken(e.target.value)}
+                placeholder="Optional API Auth Token (if AUTH_ENABLED=true)"
+              />
+              <button type="submit" className="primary">
+                Save &amp; Connect
+              </button>
+            </div>
+          </form>
+        )}
 
         <section className="stats">
           <Stat
@@ -826,7 +952,7 @@ export default function App() {
                     {analysis.annotated_video_url && (
                       <a
                         className="download-link"
-                        href={`${API}${analysis.annotated_video_url}`}
+                        href={`${apiUrl}${analysis.annotated_video_url}`}
                         target="_blank"
                         rel="noreferrer"
                       >
@@ -841,7 +967,7 @@ export default function App() {
                       className="annotated-player"
                       controls
                       preload="metadata"
-                      src={`${API}${analysis.annotated_video_url}`}
+                      src={`${apiUrl}${analysis.annotated_video_url}`}
                     />
                   ) : (
                     <div className="empty">Annotated video unavailable.</div>
@@ -1252,7 +1378,7 @@ export default function App() {
             <Shield size={14} /> CrowdGuard AI · Real-Time Behavior, Panic &amp; Forecast Engine
           </span>
           <span>
-            <Wifi size={14} /> {API}
+            <Wifi size={14} /> {apiUrl || 'No backend URL configured'}
           </span>
         </footer>
       </main>

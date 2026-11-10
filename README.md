@@ -111,3 +111,16 @@ After populating `event_within_horizon` (`0` or `1`) with verified horizon label
 - `WS /ws/cameras/{camera_id}` — low-latency WebSocket push stream (annotated JPEG + live physics/panic/forecast metrics)
 - `GET /api/v1/incidents`, `PATCH /api/v1/incidents/{id}` — SQLite-backed incident review (`OPEN` / `ACKNOWLEDGED` / `RESOLVED`)
 - Legacy compatibility: `POST /api/v1/rtsp/start`, `/stop`, `/status`, `/frame`
+
+## Deploying to Vercel + Cloud Backend
+
+Because the backend requires **PyTorch, Ultralytics YOLO, OpenCV, persistent WebSockets, background RTSP ingestion threads, and large video uploads** (which exceed Vercel Serverless's 250 MB bundle limit, 4.5 MB payload cap, and stateless execution limits), CrowdGuard AI uses a standard split-cloud deployment:
+
+1. **Deploy Backend (`backend/Dockerfile`) to Render / Railway / Cloud VM**:
+   - **Render**: Use the included `render.yaml` Blueprint (points to `backend/Dockerfile`, exposes `/health`, and enables `CORS_ORIGIN_REGEX=https://.*\.vercel\.app`).
+   - **Railway**: Deploy `backend/` using `backend/railway.toml` and `backend/Dockerfile`.
+   - Enable API authentication on public deployments by setting `AUTH_ENABLED=true` and a strong `API_AUTH_TOKEN`.
+
+2. **Deploy Frontend (`frontend/`) to Vercel**:
+   - Import the project into Vercel (works with Root Directory set to either `.` via `vercel.json` or `frontend` via `frontend/vercel.json`).
+   - Optionally set `VITE_API_BASE_URL=https://your-backend-url` in Vercel Environment Variables, **or** enter your hosted backend URL and optional API token directly in the dashboard's **Configure Backend Server** bar after deployment.

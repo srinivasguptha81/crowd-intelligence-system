@@ -1024,11 +1024,39 @@ footer span {
   }
 }
 
+.server-config {
+  border-color: #2f5568;
+  background: linear-gradient(145deg, #102133, #0c1726);
+}
+
+.server-fields {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr auto;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.server-fields input {
+  width: 100%;
+  background: #08101b;
+  border: 1px solid #33465c;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #eef5ff;
+  font-size: 12px;
+  outline: none;
+}
+
+.server-fields input:focus {
+  border-color: #52cbb0;
+}
+
 @media (max-width: 900px) {
   .live-telemetry-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .two-col {
+  .two-col,
+  .server-fields {
     grid-template-columns: 1fr;
   }
 }

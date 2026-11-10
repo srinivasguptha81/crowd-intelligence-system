@@ -2,6 +2,7 @@
 .env
 .venv/
 venv/
+.vercel/
 
 # Python caches & tests
 __pycache__/

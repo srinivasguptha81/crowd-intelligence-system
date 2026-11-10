@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     app_name: str = "CrowdGuard AI"
     app_version: str = "1.0.0"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    cors_origin_regex: str = r"https://.*\.vercel\.app"
     max_upload_mb: int = 150
     analysis_max_frames: int = 120
     yolo_model: str = "yolov8n.pt"
