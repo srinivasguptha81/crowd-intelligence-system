@@ -16,6 +16,10 @@ services:
       - key: RTSP_ENABLED
         value: "true"
       - key: AUTH_ENABLED
+        value: "true"
+      - key: API_AUTH_TOKEN
+        sync: false
+      - key: ALLOW_PRIVATE_RTSP
         value: "false"
       - key: MAX_UPLOAD_MB
         value: "150"
