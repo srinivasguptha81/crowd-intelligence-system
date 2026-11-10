@@ -1,0 +1,29 @@
+# Environments & secrets
+.env
+.venv/
+venv/
+
+# Python caches & tests
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Frontend dependencies & build artifacts
+node_modules/
+dist/
+.vite/
+tsconfig.tsbuildinfo
+
+# Runtime data, weights, and generated outputs
+data/
+*.db
+*.db-wal
+*.db-shm
+uploads/
+processed/
+*.pt
+models/*.joblib
+
+# OS
+.DS_Store
+Thumbs.db
